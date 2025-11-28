@@ -3,7 +3,7 @@ services:
     name: llm-analysis-quiz
     runtime: python
     pythonVersion: 3.10
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: QUIZ_SECRET
