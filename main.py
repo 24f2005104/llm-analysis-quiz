@@ -20,6 +20,11 @@ load_dotenv()
 
 # Define your secret (get from Google Form)
 VALID_SECRET = os.getenv("QUIZ_SECRET")
+QUIZ_EMAIL = os.getenv("QUIZ_EMAIL")
+AIPIPE_KEY = os.getenv("AIPIPE_KEY")
+
+if not VALID_SECRET:
+    raise ValueError("QUIZ_SECRET environment variable not set")
 # ...existing code...
 class SolveRequest(BaseModel):
     email: str
