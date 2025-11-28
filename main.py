@@ -26,10 +26,12 @@ AIPIPE_KEY = os.getenv("AIPIPE_KEY")
 if not VALID_SECRET:
     raise ValueError("QUIZ_SECRET environment variable not set")
 # ...existing code...
+
 class SolveRequest(BaseModel):
     email: str
     secret: str
     url: str
+
 
 @app.post("/solve")
 async def solve_endpoint(payload: SolveRequest):
@@ -45,7 +47,7 @@ async def solve_endpoint(payload: SolveRequest):
     last_submission = None
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        while current_url and (time.time() - start_ts) < timeout_seconds:
+        while (time.time() - start_ts) < timeout_seconds:
             # Solve the current URL
             result = await solve_quiz_async(current_url)
             if not result.get("solved"):
@@ -76,15 +78,25 @@ async def solve_endpoint(payload: SolveRequest):
 
                 resp_json = resp.json()
                 logging.info(f"Submit response: {resp_json}")
-                # If correct and a next URL is provided, continue; else stop
-                if resp_json.get("correct") and resp_json.get("url"):
-                    current_url = resp_json["url"]
-                    # small pause to avoid tight loop
+
+                # --- NEW LOGIC START ---
+                # Even if incorrect, the question is still open for 300s.
+                # If the server returns next URL, we may continue;
+                # If not, we retry SAME question until 300s expires.
+                if resp_json.get("correct"):
+                    if resp_json.get("url"):
+                        current_url = resp_json["url"]
+                        await asyncio.sleep(0.5)
+                        continue
+                    else:
+                        break  # correct, no next question
+                else:
+                    # Incorrect answer — retry SAME question if time remains
+                    logging.info("Incorrect answer — retrying same question until timeout.")
                     await asyncio.sleep(0.5)
                     continue
-                else:
-                    # either incorrect or no next URL -> stop
-                    break
+                # --- NEW LOGIC END ---
+
             except Exception as e:
                 logging.error(f"Error while submitting answer: {e}")
                 break
@@ -95,4 +107,6 @@ async def solve_endpoint(payload: SolveRequest):
         "last_submission": last_submission,
         "elapsed_seconds": time.time() - start_ts
     }
+
+
 # ...existing code...
