@@ -35,7 +35,7 @@ def fetch_page_sync(url: str):
     driver = None
     try:
         logging.info(f"Launching Selenium for {url}...")
-        options = webdriver.ChromeOptions()
+        options = webdriver.ChromeOptions()          # FIXED
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -56,6 +56,20 @@ def fetch_page_sync(url: str):
         # Extract answer + submit URL
         answer, submit_url, page_text = extract_answer_and_submit(content, url, driver)
 
+        # -------------------------------------------------------------------------
+        # AUTO–NEXT–URL ADDITION
+        # -------------------------------------------------------------------------
+        next_url = extract_next_url(driver.page_source, url)
+        if next_url:
+            logging.info(f"AUTO-NEXT detected: {next_url}")
+            return {
+                "solved": True,
+                "answer": answer,
+                "submit_url": submit_url,
+                "page_text": page_text,
+                "next_url": next_url,
+            }
+
         try:
             answer_preview = str(answer)[:120] if answer is not None else "empty"
         except Exception:
@@ -63,18 +77,39 @@ def fetch_page_sync(url: str):
 
         logging.info(f"Answer extracted: {answer_preview} submit_url: {submit_url}")
 
-        return {"solved": True, "answer": answer, "submit_url": submit_url, "page_text": page_text}
+        return {
+            "solved": True,
+            "answer": answer,
+            "submit_url": submit_url,
+            "page_text": page_text,
+            "next_url": None,
+        }
 
     except Exception as e:
         logging.error(f"Selenium error: {e}")
         logging.error(traceback.format_exc())
-        return {"solved": False, "answer": "", "submit_url": None, "page_text": ""}
+        return {"solved": False, "answer": "", "submit_url": None, "page_text": "", "next_url": None}
     finally:
         if driver:
             try:
                 driver.quit()
             except:
                 pass
+
+
+# -------------------------------------------------------------------------
+# NEW FUNCTION: Extract next URL if the quiz shows it (even for wrong answer)
+# -------------------------------------------------------------------------
+def extract_next_url(content: str, base_url: str):
+    soup = BeautifulSoup(content, "html.parser")
+    links = soup.find_all("a", href=True)
+
+    for a in links:
+        href = a["href"]
+        if "project2-" in href and "submit" not in href:
+            return urljoin(base_url, href)
+
+    return None
 
 
 def extract_answer_and_submit(content: str, page_url: str, driver=None):
@@ -89,7 +124,7 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
 
         normalized = re.sub(r'\s+', ' ', page_text)
 
-        # Always use this submit URL (true for ALL Project 2 problems)
+        # Always use this submit URL
         submit_url = "https://tds-llm-analysis.s-anand.net/submit"
 
         # ----------------------------------------------------------------------
@@ -113,7 +148,7 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
             return uv_cmd, submit_url, page_text
 
         # ----------------------------------------------------------------------
-        # NORMAL CASES (unchanged from your code)
+        # NORMAL CASES
         # ----------------------------------------------------------------------
 
         answer_candidate = ""
@@ -146,7 +181,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
 
                 logging.info(f"Scrape page text preview: {scrape_text[:300]}")
 
-                # Extract numeric secret
                 m = re.search(r'secret\s*(?:code)?\s*(?:is|:)?\s*([0-9]{3,})', scrape_text, re.I)
                 if m:
                     answer_candidate = m.group(1).strip()
@@ -158,7 +192,7 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
             except Exception as e:
                 logging.error(f"Scrape error: {e}")
 
-        # CSV logic unchanged
+        # CSV logic
         csv_url = None
         for a in soup.find_all("a", href=True):
             if ".csv" in a["href"].lower():
@@ -176,7 +210,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
                 r = httpx.get(csv_url, timeout=20.0)
                 raw = r.content.decode('utf-8', errors='replace')
 
-                # Sniff delimiter
                 try:
                     dialect = csv.Sniffer().sniff("\n".join(raw.splitlines()[:5]))
                     delim = dialect.delimiter
@@ -186,7 +219,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
                 lines = raw.splitlines()
                 first_line = lines[0].split(delim)
 
-                # Detect header
                 try:
                     for v in first_line:
                         float(v.strip())
@@ -224,7 +256,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
                         counts[col] = counts.get(col, 0) + 1
 
                 if sums:
-                    # pick best column
                     cand = None
                     for c in sums:
                         if c.lower() == "value":
@@ -235,7 +266,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
 
                     total = sums[cand]
 
-                    # Return as int if whole
                     if abs(total - round(total)) < 1e-9:
                         answer_candidate = int(round(total))
                     else:
@@ -243,7 +273,6 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
             except Exception as e:
                 logging.error(f"CSV parse error: {e}")
 
-        # FINAL fallback
         if not answer_candidate:
             answer_candidate = "anything you want"
 
