@@ -35,7 +35,7 @@ def fetch_page_sync(url: str):
     driver = None
     try:
         logging.info(f"Launching Selenium for {url}...")
-        options = webdriver.ChromiumOptions()
+        options = webdriver.ChromeOptions()
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
