@@ -27,7 +27,7 @@ async def solve_quiz_async(url: str):
     except Exception as e:
         logging.error(f"Failed to fetch page: {e}")
         logging.error(traceback.format_exc())
-        return {"solved": False, "answer": "", "submit_url": None, "page_text": ""}
+        return {"solved": False, "answer": "", "submit_url": None, "page_text": "", "next_url": None}
 
 
 def fetch_page_sync(url: str):
@@ -35,7 +35,7 @@ def fetch_page_sync(url: str):
     driver = None
     try:
         logging.info(f"Launching Selenium for {url}...")
-        options = webdriver.ChromeOptions()          # FIXED
+        options = webdriver.ChromeOptions()
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -46,7 +46,6 @@ def fetch_page_sync(url: str):
 
         logging.info(f"Navigating to {url}...")
         driver.get(url)
-
         time.sleep(2)
 
         logging.info("Extracting content...")
@@ -56,9 +55,7 @@ def fetch_page_sync(url: str):
         # Extract answer + submit URL
         answer, submit_url, page_text = extract_answer_and_submit(content, url, driver)
 
-        # -------------------------------------------------------------------------
-        # AUTO–NEXT–URL ADDITION
-        # -------------------------------------------------------------------------
+        # AUTO–NEXT URL DETECTION
         next_url = extract_next_url(driver.page_source, url)
         if next_url:
             logging.info(f"AUTO-NEXT detected: {next_url}")
@@ -70,12 +67,7 @@ def fetch_page_sync(url: str):
                 "next_url": next_url,
             }
 
-        try:
-            answer_preview = str(answer)[:120] if answer is not None else "empty"
-        except Exception:
-            answer_preview = "unprintable"
-
-        logging.info(f"Answer extracted: {answer_preview} submit_url: {submit_url}")
+        logging.info(f"Answer extracted: {str(answer)[:120]} submit_url: {submit_url}")
 
         return {
             "solved": True,
@@ -88,7 +80,13 @@ def fetch_page_sync(url: str):
     except Exception as e:
         logging.error(f"Selenium error: {e}")
         logging.error(traceback.format_exc())
-        return {"solved": False, "answer": "", "submit_url": None, "page_text": "", "next_url": None}
+        return {
+            "solved": False,
+            "answer": "",
+            "submit_url": None,
+            "page_text": "",
+            "next_url": None,
+        }
     finally:
         if driver:
             try:
@@ -98,7 +96,7 @@ def fetch_page_sync(url: str):
 
 
 # -------------------------------------------------------------------------
-# NEW FUNCTION: Extract next URL if the quiz shows it (even for wrong answer)
+# Extract next URL if quiz provides it (even on wrong answers)
 # -------------------------------------------------------------------------
 def extract_next_url(content: str, base_url: str):
     soup = BeautifulSoup(content, "html.parser")
@@ -115,16 +113,16 @@ def extract_next_url(content: str, base_url: str):
 def extract_answer_and_submit(content: str, page_url: str, driver=None):
     """
     Extract answer and submit URL from HTML page.
-    This version includes special handling for project2-uv.
+    Includes special handling for project2-uv.
     """
     try:
         soup = BeautifulSoup(content, "html.parser")
         page_text = soup.get_text(separator="\n", strip=True)
         logging.info(f"Page text (preview): {page_text[:400]}")
 
-        normalized = re.sub(r'\s+', ' ', page_text)
+        normalized = re.sub(r"\s+", " ", page_text)
 
-        # Always use this submit URL
+        # All project2 tasks share the same submit endpoint
         submit_url = "https://tds-llm-analysis.s-anand.net/submit"
 
         # ----------------------------------------------------------------------
@@ -133,12 +131,10 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
         if "project2-uv" in page_url:
             logging.info("Detected project2-uv page!")
 
-            # Extract email from URL
             parsed = urlparse(page_url)
             email_list = parse_qs(parsed.query).get("email", [])
             email = email_list[0] if email_list else "<your email>"
 
-            # Build the required command string
             uv_cmd = (
                 f'uv http get https://tds-llm-analysis.s-anand.net/project2/uv.json?email={email} '
                 f'-H "Accept: application/json"'
@@ -150,49 +146,55 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
         # ----------------------------------------------------------------------
         # NORMAL CASES
         # ----------------------------------------------------------------------
-
         answer_candidate = ""
 
-        # Try to extract JSON example "answer"
+        # Detect JSON answer object
         try:
-            json_match = re.search(r'(\{[\s\S]*\})', page_text)
+            json_match = re.search(r"(\{[\s\S]*\})", page_text)
             if json_match:
-                sample = json.loads(json_match.group(1))
-                if isinstance(sample, dict) and "answer" in sample:
-                    answer_candidate = sample["answer"]
+                parsed = json.loads(json_match.group(1))
+                if isinstance(parsed, dict) and "answer" in parsed:
+                    answer_candidate = parsed["answer"]
         except Exception:
             pass
 
-        # SCRAPE handling
-        scrape_match = re.search(r'(/demo-scrape-data[^\s\{\"]*)', normalized)
+        # ------------------------------------------------------------------
+        # SCRAPE MODE
+        # ------------------------------------------------------------------
+        scrape_match = re.search(r"(/demo-scrape-data[^\s\{\"]*)", normalized)
         if scrape_match:
             scrape_url = urljoin(page_url, scrape_match.group(1))
             logging.info(f"Detected scrape path -> {scrape_url}")
-
             try:
                 if driver:
                     driver.get(scrape_url)
                     time.sleep(1.5)
                     scrape_src = driver.page_source
-                    scrape_text = BeautifulSoup(scrape_src, "html.parser").get_text(separator="\n", strip=True)
+                    scrape_text = BeautifulSoup(scrape_src, "html.parser").get_text(
+                        separator="\n", strip=True
+                    )
                 else:
                     r = httpx.get(scrape_url, timeout=10.0)
                     scrape_text = r.text
 
                 logging.info(f"Scrape page text preview: {scrape_text[:300]}")
 
-                m = re.search(r'secret\s*(?:code)?\s*(?:is|:)?\s*([0-9]{3,})', scrape_text, re.I)
+                m = re.search(
+                    r"secret\s*(?:code)?\s*(?:is|:)?\s*([0-9]{3,})", scrape_text, re.I
+                )
                 if m:
                     answer_candidate = m.group(1).strip()
                 else:
-                    nums = re.findall(r'\b([0-9]{3,})\b', scrape_text)
+                    nums = re.findall(r"\b([0-9]{3,})\b", scrape_text)
                     if nums:
                         answer_candidate = max(nums, key=len)
 
             except Exception as e:
                 logging.error(f"Scrape error: {e}")
 
-        # CSV logic
+        # ------------------------------------------------------------------
+        # CSV MODE
+        # ------------------------------------------------------------------
         csv_url = None
         for a in soup.find_all("a", href=True):
             if ".csv" in a["href"].lower():
@@ -200,7 +202,7 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
                 break
 
         if not csv_url:
-            m = re.search(r'(https?://[^\s]+?\.csv)', normalized, re.I)
+            m = re.search(r"(https?://[^\s]+?\.csv)", normalized, re.I)
             if m:
                 csv_url = m.group(1)
 
@@ -208,13 +210,13 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
             logging.info(f"Found CSV link -> {csv_url}")
             try:
                 r = httpx.get(csv_url, timeout=20.0)
-                raw = r.content.decode('utf-8', errors='replace')
+                raw = r.content.decode("utf-8", errors="replace")
 
                 try:
                     dialect = csv.Sniffer().sniff("\n".join(raw.splitlines()[:5]))
                     delim = dialect.delimiter
                 except Exception:
-                    delim = ','
+                    delim = ","
 
                 lines = raw.splitlines()
                 first_line = lines[0].split(delim)
@@ -236,43 +238,37 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
                     headers = [f"col_{i}" for i in range(len(rows[0]))]
 
                 sums = {}
-                counts = {}
                 for row in rows:
                     for idx, val in enumerate(row):
                         col = headers[idx]
                         if not val:
                             continue
                         val2 = re.sub(",", "", str(val).strip())
+
                         try:
                             num = float(val2)
                         except:
-                            m = re.search(r'(-?\d+(\.\d+)?)', val2)
+                            m = re.search(r"(-?\d+(\.\d+)?)", val2)
                             if m:
                                 num = float(m.group(1))
                             else:
                                 continue
 
                         sums[col] = sums.get(col, 0) + num
-                        counts[col] = counts.get(col, 0) + 1
 
                 if sums:
-                    cand = None
-                    for c in sums:
-                        if c.lower() == "value":
-                            cand = c
-                            break
+                    # Prefer column named "value" if present
+                    cand = next((c for c in sums if c.lower() == "value"), None)
                     if not cand:
                         cand = sorted(sums.keys())[0]
 
                     total = sums[cand]
+                    answer_candidate = int(round(total)) if total.is_integer() else total
 
-                    if abs(total - round(total)) < 1e-9:
-                        answer_candidate = int(round(total))
-                    else:
-                        answer_candidate = total
             except Exception as e:
                 logging.error(f"CSV parse error: {e}")
 
+        # FINAL DEFAULT
         if not answer_candidate:
             answer_candidate = "anything you want"
 
