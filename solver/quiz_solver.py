@@ -101,6 +101,17 @@ def fetch_page_sync(url: str):
 # -------------------------------------------------------------------------
 # SPECIAL CASE HANDLER: project2-git
 # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
+# SPECIAL CASE HANDLER: project2-md
+# -------------------------------------------------------------------------
+def handle_project2_md(page_url: str):
+    """
+    Returns the required relative link string for project2-md tasks.
+    """
+    relative_path = "/project2/data-preparation.md"
+    logging.info(f"project2-md answer generated: {relative_path}")
+    return relative_path, "https://tds-llm-analysis.s-anand.net/submit"
+
 def handle_project2_git(page_url: str):
     """
     Returns the two Git commands required for the project2-git task.
@@ -210,6 +221,11 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
             return handle_project2_git(page_url)[0], handle_project2_git(page_url)[1], ""
 
         # ------------------------------------------------------------------
+        # Detect project2-md
+        if "project2-md" in page_url:
+            logging.info("Detected project2-md page!")
+            return handle_project2_md(page_url)[0], handle_project2_md(page_url)[1], ""
+
         # CSV MODE
         # ------------------------------------------------------------------
         csv_url = None
