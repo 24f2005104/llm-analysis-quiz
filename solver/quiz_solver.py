@@ -94,6 +94,18 @@ def fetch_page_sync(url: str):
             except:
                 pass
 
+# -------------------------------------------------------------------------
+# SPECIAL CASE HANDLER: project2-audio-passphrase
+# -------------------------------------------------------------------------
+def handle_project2_audio(page_url: str):
+    """
+    Returns a placeholder transcription for the audio passphrase.
+    Replace this with real transcription if you have an audio model.
+    """
+    # Placeholder answer; in practice, you can call an ASR model
+    transcription = "your transcription here 123"
+    logging.info(f"project2-audio-passphrase answer generated: {transcription}")
+    return transcription, "https://tds-llm-analysis.s-anand.net/submit"
 
 # -------------------------------------------------------------------------
 # Extract next URL if quiz provides it (even on wrong answers)
@@ -225,6 +237,10 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
         if "project2-md" in page_url:
             logging.info("Detected project2-md page!")
             return handle_project2_md(page_url)[0], handle_project2_md(page_url)[1], ""
+        # Detect project2-audio-passphrase
+        if "project2-audio-passphrase" in page_url:
+            logging.info("Detected project2-audio-passphrase page!")
+            return handle_project2_audio(page_url)[0], handle_project2_audio(page_url)[1], ""
 
         # CSV MODE
         # ------------------------------------------------------------------
