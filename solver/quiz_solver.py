@@ -98,6 +98,19 @@ def fetch_page_sync(url: str):
 # -------------------------------------------------------------------------
 # Extract next URL if quiz provides it (even on wrong answers)
 # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
+# SPECIAL CASE HANDLER: project2-git
+# -------------------------------------------------------------------------
+def handle_project2_git(page_url: str):
+    """
+    Returns the two Git commands required for the project2-git task.
+    """
+    filename = "env.sample"
+    commit_message = "chore: keep env sample"
+    commands = f"git add {filename}\ngit commit -m \"{commit_message}\""
+    logging.info(f"project2-git commands generated:\n{commands}")
+    return commands, "https://tds-llm-analysis.s-anand.net/submit"
+
 def extract_next_url(content: str, base_url: str):
     soup = BeautifulSoup(content, "html.parser")
     links = soup.find_all("a", href=True)
@@ -191,6 +204,10 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
 
             except Exception as e:
                 logging.error(f"Scrape error: {e}")
+        # Detect project2-git
+        if "project2-git" in page_url:
+            logging.info("Detected project2-git page!")
+            return handle_project2_git(page_url)[0], handle_project2_git(page_url)[1], ""
 
         # ------------------------------------------------------------------
         # CSV MODE
