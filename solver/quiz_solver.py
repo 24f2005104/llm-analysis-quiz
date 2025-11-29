@@ -92,16 +92,8 @@ def extract_answer_and_submit(content: str, page_url: str, driver=None):
         # Normalize whitespace so URLs split across lines join correctly
         normalized = re.sub(r'\s+', ' ', page_text)
 
-        # Find first absolute URL
-        submit_match = re.search(r'(https?://[^\s\{\"]+)', normalized)
-        submit_url = submit_match.group(1) if submit_match else None
-
-        # Resolve relative submit mention
-        if not submit_url and '/submit' in normalized:
-            submit_url = urljoin(page_url, '/submit')
-
-        if submit_url and not re.search(r'https?://[^/]+/.+', submit_url) and '/submit' in normalized:
-            submit_url = submit_url.rstrip('/') + '/submit'
+       # The submit endpoint is ALWAYS constant on this platform.
+        submit_url = "https://tds-llm-analysis.s-anand.net/submit"
 
         answer_candidate = ""
         # Try to extract JSON example "answer" if present (demo pages)
