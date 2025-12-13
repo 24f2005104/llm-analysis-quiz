@@ -124,22 +124,19 @@ PAGE TEXT:
 
         logger.info(f"Answer correct at step {steps}")
 
+       # ----------------------------
+        # FOLLOW NEXT QUIZ (API-CORRECT)
         # ----------------------------
-        # FOLLOW NEXT QUIZ (IMPORTANT FIX)
-        # ----------------------------
-        next_url = submit_resp.get("next_url")
+        next_url = submit_resp.get("url")
 
-        if next_url:
-            if next_url.startswith("/"):
-                base = re.match(r"(https?://[^/]+)", current_url).group(1)
-                next_url = base + next_url
-
+        if next_url and next_url != current_url:
             logger.info(f"Following next URL: {next_url}")
             current_url = next_url
             current_text = await browse(current_url)
             continue
 
         break  # no next quiz → done
+
 
     logger.info("Agent loop completed")
     return all_results
