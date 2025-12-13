@@ -1,92 +1,90 @@
-# app/agent.py
-import logging
-import time
-from .tools import python, submit, browse
+import asyncio
+import re
+from .tools import browse, python, submit
+from .logger import logger
 from .llm import call_llm
-from .config import TIME_LIMIT, START_TIME, MAX_AGENT_STEPS
 
-logger = logging.getLogger(__name__)
+# Maximum steps per quiz to avoid infinite loops
+MAX_AGENT_STEPS = 40
 
-def time_left():
-    return TIME_LIMIT - (time.time() - START_TIME)
-
-
-async def agent_loop(initial_url: str):
+async def agent_loop(page_text, start_url, time_left_fn):
     """
-    Fully autonomous quiz agent:
-    - Auto-calls LLM to generate Python code per page
-    - Executes safely
-    - Submits answer and retries automatically if incorrect
-    - Follows next URL if provided
-    - Logs submission status
+    Main agent loop that:
+    - Runs code provided by LLM
+    - Submits answers
+    - Follows next URLs automatically
+    - Retries submissions until correct or time runs out
     """
-    current_url = initial_url
-    page_text = await browse(current_url)
-    step = 0
-    last_answer = None
-    last_submit_result = None
 
-    logger.info("Agent started")
+    current_text = page_text
+    current_url = start_url
+    steps = 0
+    all_results = []
 
-    while current_url and step < MAX_AGENT_STEPS:
-        if time_left() <= 0:
-            logger.warning("Time limit exceeded, stopping agent")
-            break
+    logger.info("Starting agent loop")
 
-        step += 1
-        logger.info(f"Agent step {step} | url={current_url}")
+    while steps < MAX_AGENT_STEPS and time_left_fn() > 0:
+        steps += 1
+        logger.info(f"Agent step {steps} | time left: {time_left_fn():.1f}s")
 
-        # Call LLM to generate Python code for this page
-        prompt = f"""
-You are a Python agent. Given this page content, write Python code that produces the correct answer:
-{page_text}
-
-Output the result in a variable called 'result'.
-"""
+        # --- Generate code from LLM ---
         try:
-            llm_code = await call_llm(prompt)
-            logger.info(f"LLM generated code:\n{llm_code}")
+            # This prompt can be customized per quiz type
+            prompt = f"Extract and solve quiz from the page text below. Return Python code assigning result to variable 'result'.\n\n{current_text}"
+            code = await call_llm(prompt)
+            if not code.strip():
+                logger.warning("LLM returned empty code, skipping step")
+                break
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             break
 
-        # Execute generated code safely
+        # --- Execute Python code ---
         try:
-            result_locals = python(llm_code)
-            last_answer = result_locals.get("result")
-            logger.info(f"Python execution result: {last_answer}")
+            result = python(code)
         except Exception as e:
             logger.error(f"Python execution failed: {e}")
+            result = None
+
+        # --- Submit the result ---
+        try:
+            submit_resp = await submit(result, time_left_fn)
+            all_results.append({
+                "url": current_url,
+                "answer": result,
+                "submit_result": submit_resp
+            })
+        except Exception as e:
+            logger.error(f"Submission failed: {e}")
+            all_results.append({
+                "url": current_url,
+                "answer": result,
+                "submit_result": {"error": str(e)}
+            })
             break
 
-        # Submit answer
-        response = await submit(last_answer)
-        if "error" in response:
-            logger.error(f"Submission failed: {response['error']}")
-            break
-
-        # Unwrap nested submission result
-        submit_result = response.get("result", {}).get("submit_result", {})
-        last_submit_result = submit_result
-        correct = submit_result.get("correct", False)
-        next_url = submit_result.get("url")
-
-        # Log submission status
-        logger.info(f"Submission status: {'Correct' if correct else 'Incorrect'} | answer={last_answer} | next_url={next_url}")
-
+        # --- Check if submission was correct ---
+        correct = submit_resp.get("correct", False)
         if correct:
-            if next_url:
-                logger.info(f"Moving to next URL: {next_url}")
-                page_text = await browse(next_url)
-                current_url = next_url
-            else:
-                logger.info("Quiz completed successfully")
-                break
+            logger.info(f"Answer correct at step {steps}")
         else:
-            logger.warning("Answer incorrect, will retry automatically if retries remain")
+            logger.info("Answer incorrect, retrying...")
+            # Optional: wait a bit before retrying
+            await asyncio.sleep(1)
+            continue  # retry same step
 
-    return {
-        "last_answer": last_answer,
-        "last_url": current_url,
-        "submit_result": last_submit_result
-    }
+        # --- Check for next URL ---
+        next_url = None
+        # Assume the page contains a link like: /demo-scrape?email=...&id=...
+        match = re.search(r'(https?://[^\s"\']+)', current_text)
+        if match:
+            next_url = match.group(1)
+
+        if next_url and next_url != current_url:
+            current_url = next_url
+            current_text = await browse(current_url)
+        else:
+            break  # No next URL, finish
+
+    logger.info("Agent loop completed")
+    return all_results

@@ -1,11 +1,10 @@
-# app/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
 from .agent import agent_loop
 from .tools import browse
-from .config import SECRET, TIME_LIMIT, START_TIME
+from .config import SECRET, TIME_LIMIT
 from .logger import logger
 import time
 
@@ -29,12 +28,6 @@ class QuizRequest(BaseModel):
     url: str
 
 # ------------------------------
-# Helper: check time left
-# ------------------------------
-def time_left():
-    return TIME_LIMIT - (time.time() - START_TIME)
-
-# ------------------------------
 # Quiz endpoint
 # ------------------------------
 @app.post("/quiz")
@@ -46,14 +39,18 @@ async def quiz(payload: QuizRequest):
         logger.warning(f"Invalid secret from {payload.email}")
         raise HTTPException(status_code=403, detail="Invalid secret")
 
-    if time_left() <= 0:
-        logger.warning("Time limit exceeded before starting")
-        raise HTTPException(status_code=400, detail="Time limit exceeded")
+    # Start timer for this request
+    start_time = time.time()
+    def time_left():
+        return TIME_LIMIT - (time.time() - start_time)
 
     try:
-        logger.info("Starting agent loop")
-        # Only pass the initial URL
-        final_result = await agent_loop(payload.url)
+        # Fetch initial page content
+        page_text = await browse(payload.url)
+        logger.info("Initial page fetched, starting agent loop")
+
+        # Run agent loop (auto-follows next URLs)
+        final_result = await agent_loop(page_text, payload.url, time_left)
 
         logger.info("Agent loop completed")
         return {
