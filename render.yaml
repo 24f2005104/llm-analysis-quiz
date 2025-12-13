@@ -3,9 +3,7 @@ services:
     name: llm-quiz-agent
     env: python
     plan: free
-    buildCommand: >
-      pip install -r requirements.txt &&
-      playwright install chromium
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: EMAIL
@@ -13,7 +11,4 @@ services:
       - key: SECRET
         sync: false
       - key: AIPIPE_TOKEN
-        sync: false
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: 0
         sync: false

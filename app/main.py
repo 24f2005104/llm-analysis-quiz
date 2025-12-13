@@ -7,6 +7,7 @@ from .tools import browse
 from .config import SECRET, TIME_LIMIT
 from .logger import logger
 import time
+from playwright.async_api import async_playwright
 
 # ------------------------------
 # FastAPI app setup
@@ -18,6 +19,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+# ------------------------------
+# Ensure Playwright browsers are installed at startup
+# ------------------------------
+@app.on_event("startup")
+async def startup_event():
+    try:
+        async with async_playwright() as p:
+            # Launch and close immediately to trigger browser download if missing
+            browser = await p.chromium.launch()
+            await browser.close()
+        logger.info("Playwright Chromium ready")
+    except Exception as e:
+        logger.error(f"Failed to ensure Playwright browsers: {e}")
 
 # ------------------------------
 # Request model
