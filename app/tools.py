@@ -2,10 +2,18 @@ import time
 import httpx
 import asyncio
 from playwright.async_api import async_playwright
-from .config import EMAIL, SECRET, DEFAULT_SUBMIT_URL, MAX_BROWSER_CHARS, SUBMIT_RETRIES, SUBMIT_RETRY_DELAY
+from .config import (
+    EMAIL,
+    SECRET,
+    DEFAULT_SUBMIT_URL,
+    MAX_BROWSER_CHARS,
+    SUBMIT_RETRIES,
+    SUBMIT_RETRY_DELAY,
+)
 from .logger import logger
 
 CURRENT_URL = None
+
 
 async def browse(url: str):
     global CURRENT_URL
@@ -24,35 +32,33 @@ async def browse(url: str):
     logger.info("Page rendered successfully")
     return text[:MAX_BROWSER_CHARS]
 
+
 def python(code: str):
+    """
+    Execute LLM-generated Python safely.
+    """
     logger.info("Executing Python code")
 
-    SAFE_BUILTINS = {
+    safe_builtins = {
         "abs": abs,
         "min": min,
         "max": max,
         "sum": sum,
         "len": len,
         "range": range,
-        "round": round,
-        "print": print,
-        "__import__": __import__,  # 🔑 REQUIRED FOR imports
+        "__import__": __import__,  # REQUIRED for math/re imports
     }
 
-    global_env = {
-        "__builtins__": SAFE_BUILTINS
+    safe_globals = {
+        "__builtins__": safe_builtins,
     }
 
     local_env = {}
 
-    exec(code, global_env, local_env)
+    exec(code, safe_globals, local_env)
 
     logger.info("Python execution completed")
-
-    if "result" not in local_env:
-        raise ValueError("LLM code did not define `result`")
-
-    return local_env["result"]
+    return local_env.get("result")
 
 
 async def submit(answer, time_left_fn):
@@ -64,7 +70,7 @@ async def submit(answer, time_left_fn):
         "email": EMAIL,
         "secret": SECRET,
         "url": CURRENT_URL,
-        "answer": answer
+        "answer": answer,
     }
 
     last_error = None
@@ -91,5 +97,5 @@ async def submit(answer, time_left_fn):
     logger.error("Submission failed after retries")
     return {
         "error": "Submission failed after retries",
-        "details": last_error
+        "details": last_error,
     }

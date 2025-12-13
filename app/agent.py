@@ -9,15 +9,17 @@ MAX_AGENT_STEPS = 40
 
 def extract_python(code_text: str) -> str:
     """
-    Extract only executable Python code from LLM output.
+    Extract executable Python code from LLM output.
     """
     if not code_text:
         return ""
 
+    # Prefer fenced python blocks
     match = re.search(r"```python(.*?)```", code_text, re.DOTALL)
     if match:
         return match.group(1).strip()
 
+    # Any fenced block
     match = re.search(r"```(.*?)```", code_text, re.DOTALL)
     if match:
         return match.group(1).strip()
@@ -28,7 +30,7 @@ def extract_python(code_text: str) -> str:
 async def agent_loop(page_text, start_url, time_left_fn):
     """
     Main agent loop:
-    - Generates Python via LLM
+    - Uses LLM to generate Python
     - Executes safely
     - Submits answers
     - Follows next_url from submission response
@@ -58,17 +60,16 @@ TASK:
 
 STRICT RULES:
 - Output ONLY valid Python code.
-- Do NOT use markdown.
-- Do NOT use backticks.
-- Do NOT import third-party libraries.
-- Allowed imports: math, re, statistics, datetime
+- No markdown, no backticks.
+- No explanations.
+- No third-party libraries.
+- Allowed imports ONLY: math, re, statistics, datetime.
 - Do NOT use requests, httpx, pandas, numpy, playwright.
-- The code MUST assign the final answer to a variable named `result`.
+- The code MUST assign the answer to a variable named `result`.
 
 PAGE TEXT:
 {current_text}
 """
-
             llm_output = await call_llm(prompt)
 
             if not llm_output.strip():
@@ -87,9 +88,6 @@ PAGE TEXT:
 
         try:
             result = python(clean_code)
-        except SyntaxError as e:
-            logger.error(f"Python syntax error: {e}")
-            continue
         except Exception as e:
             logger.error(f"Python execution failed: {e}")
             continue
@@ -113,13 +111,13 @@ PAGE TEXT:
             break
 
         # ----------------------------
-        # CHECK RESULT
+        # CHECK CORRECTNESS
         # ----------------------------
         if not submit_resp.get("correct", False):
             logger.info("Answer incorrect, retrying")
             current_text += (
                 "\n\nPrevious answer was incorrect. "
-                "Re-check calculations carefully."
+                "Re-check calculations carefully and try again."
             )
             await asyncio.sleep(1)
             continue
@@ -127,11 +125,15 @@ PAGE TEXT:
         logger.info(f"Answer correct at step {steps}")
 
         # ----------------------------
-        # FOLLOW NEXT URL (CORRECT WAY)
+        # FOLLOW NEXT QUIZ (IMPORTANT FIX)
         # ----------------------------
         next_url = submit_resp.get("next_url")
 
         if next_url:
+            if next_url.startswith("/"):
+                base = re.match(r"(https?://[^/]+)", current_url).group(1)
+                next_url = base + next_url
+
             logger.info(f"Following next URL: {next_url}")
             current_url = next_url
             current_text = await browse(current_url)
