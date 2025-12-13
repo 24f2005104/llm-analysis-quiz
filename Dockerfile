@@ -1,18 +1,23 @@
-# Use official Playwright image (includes Chromium + dependencies)
+# Base Playwright image
 FROM mcr.microsoft.com/playwright:focal
+
+# Install Python pip
+RUN apt-get update && \
+    apt-get install -y python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install using python3 -m pip
+# Copy requirements and install
 COPY requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
+# Copy app source
 COPY . .
 
-# Expose port 10000
+# Expose port
 EXPOSE 10000
 
-# Run FastAPI app with Uvicorn
+# Start FastAPI app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "10000"]
