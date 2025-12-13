@@ -52,14 +52,23 @@ async def agent_loop(page_text, start_url, time_left_fn):
             prompt = f"""
 You are an automated quiz-solving agent.
 
-RULES (STRICT):
-- Output ONLY valid Python code
-- No markdown, no backticks, no explanations
-- Assign the final answer to variable `result`
+TASK:
+- Read the quiz from the page text.
+- Compute the correct answer.
+
+STRICT RULES:
+- Output ONLY valid Python code.
+- Do NOT use markdown.
+- Do NOT use backticks.
+- Do NOT import third-party libraries.
+- Allowed imports: math, re, statistics, datetime
+- Do NOT use requests, httpx, pandas, numpy, playwright.
+- The code MUST assign the final answer to a variable named `result`.
 
 PAGE TEXT:
 {current_text}
 """
+
             llm_output = await call_llm(prompt)
 
             if not llm_output.strip():
