@@ -26,10 +26,34 @@ async def browse(url: str):
 
 def python(code: str):
     logger.info("Executing Python code")
+
+    SAFE_BUILTINS = {
+        "abs": abs,
+        "min": min,
+        "max": max,
+        "sum": sum,
+        "len": len,
+        "range": range,
+        "round": round,
+        "print": print,
+        "__import__": __import__,  # 🔑 REQUIRED FOR imports
+    }
+
+    global_env = {
+        "__builtins__": SAFE_BUILTINS
+    }
+
     local_env = {}
-    exec(code, {"__builtins__": {}}, local_env)
+
+    exec(code, global_env, local_env)
+
     logger.info("Python execution completed")
-    return str(local_env.get("result", "ok"))
+
+    if "result" not in local_env:
+        raise ValueError("LLM code did not define `result`")
+
+    return local_env["result"]
+
 
 async def submit(answer, time_left_fn):
     if time_left_fn() <= 0:
