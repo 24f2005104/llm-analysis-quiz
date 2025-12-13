@@ -1,17 +1,13 @@
-# Base Playwright image
+# Base Playwright image with Python included
 FROM mcr.microsoft.com/playwright:focal
-
-# Install Python pip
-RUN apt-get update && \
-    apt-get install -y python3-pip && \
-    rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install
+# Copy requirements and install without caching
 COPY requirements.txt .
-RUN python3 -m pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy app source
 COPY . .
