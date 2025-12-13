@@ -4,9 +4,9 @@ FROM mcr.microsoft.com/playwright:focal
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install
+# Copy requirements and install using python3 -m pip
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the app
 COPY . .
