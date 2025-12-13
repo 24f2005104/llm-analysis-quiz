@@ -7,13 +7,36 @@ from .llm import call_llm
 # Maximum steps per quiz to avoid infinite loops
 MAX_AGENT_STEPS = 40
 
+
+def extract_python(code_text: str) -> str:
+    """
+    Extract only executable Python code from LLM output.
+    """
+    if not code_text:
+        return ""
+
+    # Prefer fenced python blocks
+    match = re.search(r"```python(.*?)```", code_text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Any fenced block
+    match = re.search(r"```(.*?)```", code_text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Fallback: raw text
+    return code_text.strip()
+
+
 async def agent_loop(page_text, start_url, time_left_fn):
     """
     Main agent loop that:
-    - Runs code provided by LLM
+    - Uses LLM to generate Python code
+    - Executes the code safely
     - Submits answers
-    - Follows next URLs automatically
-    - Retries submissions until correct or time runs out
+    - Retries intelligently
+    - Follows next URLs if present
     """
 
     current_text = page_text
@@ -27,26 +50,60 @@ async def agent_loop(page_text, start_url, time_left_fn):
         steps += 1
         logger.info(f"Agent step {steps} | time left: {time_left_fn():.1f}s")
 
-        # --- Generate code from LLM ---
+        # ----------------------------
+        # LLM CODE GENERATION
+        # ----------------------------
         try:
-            # This prompt can be customized per quiz type
-            prompt = f"Extract and solve quiz from the page text below. Return Python code assigning result to variable 'result'.\n\n{current_text}"
-            code = await call_llm(prompt)
-            if not code.strip():
-                logger.warning("LLM returned empty code, skipping step")
-                break
+            prompt = f"""
+You are an automated quiz-solving agent.
+
+TASK:
+- Read the quiz from the page text.
+- Compute the correct answer.
+
+OUTPUT RULES (STRICT):
+- Output ONLY valid Python code.
+- Do NOT use markdown.
+- Do NOT use backticks.
+- Do NOT include explanations.
+- The code MUST assign the final answer to a variable named `result`.
+- The code MUST run without syntax errors.
+
+PAGE TEXT:
+{current_text}
+"""
+            llm_output = await call_llm(prompt)
+
+            if not llm_output.strip():
+                logger.warning("LLM returned empty output, retrying")
+                continue
+
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             break
 
-        # --- Execute Python code ---
+        # ----------------------------
+        # EXECUTE PYTHON SAFELY
+        # ----------------------------
+        clean_code = extract_python(llm_output)
+        logger.info("Executing Python code")
+
         try:
-            result = python(code)
+            result = python(clean_code)
+        except SyntaxError as e:
+            logger.error(f"Python syntax error: {e}")
+            continue
         except Exception as e:
             logger.error(f"Python execution failed: {e}")
-            result = None
+            continue
 
-        # --- Submit the result ---
+        if result is None:
+            logger.warning("No result produced, retrying LLM step")
+            continue
+
+        # ----------------------------
+        # SUBMIT ANSWER
+        # ----------------------------
         try:
             submit_resp = await submit(result, time_left_fn)
             all_results.append({
@@ -63,28 +120,35 @@ async def agent_loop(page_text, start_url, time_left_fn):
             })
             break
 
-        # --- Check if submission was correct ---
+        # ----------------------------
+        # CHECK CORRECTNESS
+        # ----------------------------
         correct = submit_resp.get("correct", False)
         if correct:
             logger.info(f"Answer correct at step {steps}")
         else:
-            logger.info("Answer incorrect, retrying...")
-            # Optional: wait a bit before retrying
+            logger.info("Answer incorrect, refining approach and retrying")
+            current_text += (
+                "\n\nPrevious answer was incorrect. "
+                "Re-check calculations carefully and try a different approach."
+            )
             await asyncio.sleep(1)
-            continue  # retry same step
+            continue
 
-        # --- Check for next URL ---
+        # ----------------------------
+        # FOLLOW NEXT URL (IF ANY)
+        # ----------------------------
         next_url = None
-        # Assume the page contains a link like: /demo-scrape?email=...&id=...
         match = re.search(r'(https?://[^\s"\']+)', current_text)
         if match:
             next_url = match.group(1)
 
         if next_url and next_url != current_url:
+            logger.info(f"Following next URL: {next_url}")
             current_url = next_url
             current_text = await browse(current_url)
         else:
-            break  # No next URL, finish
+            break
 
     logger.info("Agent loop completed")
     return all_results
