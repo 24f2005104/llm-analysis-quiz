@@ -5,13 +5,12 @@ from .logger import logger
 from .llm import call_llm
 
 MAX_AGENT_STEPS = 40
-MAX_RETRIES_PER_URL = 6
-MAX_SAME_ANSWER_REPEAT = 3
+MAX_FAILURES_PER_URL = 6
 
 
 def extract_python(code_text: str) -> str:
     """
-    Extract executable Python code from LLM output.
+    Extract executable Python from LLM output.
     """
     if not code_text:
         return ""
@@ -29,25 +28,19 @@ def extract_python(code_text: str) -> str:
 
 async def agent_loop(page_text, start_url, time_left_fn):
     """
-    Automated quiz-solving agent:
-    - Reads page text
-    - Uses LLM to generate Python
-    - Executes in sandbox
-    - Submits answers
-    - Follows next quiz URLs
-    - Avoids infinite loops
+    Main agent loop:
+    - Generate Python using LLM
+    - Execute in sandbox
+    - Submit answer
+    - Follow next URL from submission response
     """
 
     current_text = page_text
     current_url = start_url
-
     steps = 0
-    all_results = []
-
-    # Safety trackers
-    url_failures = {}
+    failures_for_url = 0
     last_answer = None
-    same_answer_count = 0
+    all_results = []
 
     logger.info("Starting agent loop")
 
@@ -55,33 +48,52 @@ async def agent_loop(page_text, start_url, time_left_fn):
         steps += 1
         logger.info(f"Agent step {steps} | time left: {time_left_fn():.1f}s")
 
-        # ----------------------------
-        # LLM PROMPT
-        # ----------------------------
-        prompt = f"""
-You are an automated quiz-solving agent.
+        is_scrape_quiz = "demo-scrape" in current_url
 
-TASK:
-- Read the quiz from PAGE TEXT
-- Compute the correct answer
+        # ----------------------------
+        # PROMPT SELECTION
+        # ----------------------------
+        if is_scrape_quiz:
+            prompt = f"""
+You are solving a WEB SCRAPING quiz.
+
+IMPORTANT:
+- The answer is ALWAYS in the PAGE TEXT
+- Do NOT guess
+- Do NOT reuse previous answers
+- Parse text carefully
+
+YOU MUST:
+- Use string operations, loops, regex
+- Extract data explicitly
+- Compute deterministically
 
 STRICT RULES:
 - Output ONLY valid Python code
 - No markdown, no backticks
-- Do NOT import third-party libraries
-- Allowed imports: math, re, statistics, datetime
-- Do NOT use requests, httpx, pandas, numpy, playwright
-- The final answer MUST be assigned to variable `result`
+- Allowed imports: re, math
+- Assign final answer to variable `result`
 
-IMPORTANT:
-- If data must be extracted, PARSE it explicitly from PAGE TEXT
-- Do NOT guess
-- Use string / regex logic if needed
+PAGE TEXT:
+{current_text}
+"""
+        else:
+            prompt = f"""
+You are solving a quiz.
+
+STRICT RULES:
+- Output ONLY valid Python code
+- No markdown, no backticks
+- Allowed imports: math, re, statistics, datetime
+- Assign final answer to variable `result`
 
 PAGE TEXT:
 {current_text}
 """
 
+        # ----------------------------
+        # LLM CALL
+        # ----------------------------
         try:
             llm_output = await call_llm(prompt)
             if not llm_output.strip():
@@ -104,63 +116,61 @@ PAGE TEXT:
             continue
 
         if result is None:
-            logger.warning("No result produced, retrying")
+            logger.warning("No result produced")
             continue
 
         # ----------------------------
-        # STAGNATION CHECK
+        # SAME ANSWER GUARD
         # ----------------------------
         if result == last_answer:
-            same_answer_count += 1
-        else:
-            same_answer_count = 0
-
-        last_answer = result
-
-        if same_answer_count >= MAX_SAME_ANSWER_REPEAT:
+            failures_for_url += 1
             logger.error("Same answer repeated multiple times — forcing rethink")
             current_text += (
-                "\n\nIMPORTANT: You are repeating the same wrong answer. "
-                "You MUST change strategy, parsing logic, or interpretation."
+                "\n\nPrevious answer was incorrect.\n"
+                "Re-parse the PAGE TEXT carefully.\n"
+                "Check indexes, conditions, and counts."
             )
-            same_answer_count = 0
+            await asyncio.sleep(1)
+            if failures_for_url >= MAX_FAILURES_PER_URL:
+                logger.error(f"Too many failures on {current_url}, stopping")
+                break
             continue
+
+        last_answer = result
 
         # ----------------------------
         # SUBMIT ANSWER
         # ----------------------------
         submit_resp = await submit(result, time_left_fn)
-
         all_results.append({
             "url": current_url,
             "answer": result,
             "submit_result": submit_resp
         })
 
-        # ----------------------------
-        # HANDLE INCORRECT ANSWER
-        # ----------------------------
         if not submit_resp.get("correct", False):
+            failures_for_url += 1
             logger.info("Answer incorrect")
-
-            url_failures[current_url] = url_failures.get(current_url, 0) + 1
-            if url_failures[current_url] >= MAX_RETRIES_PER_URL:
+            if failures_for_url >= MAX_FAILURES_PER_URL:
                 logger.error(f"Too many failures on {current_url}, stopping")
                 break
-
-            reason = submit_resp.get("reason")
-            feedback = "Previous answer was incorrect."
-            if reason:
-                feedback += f" Server feedback: {reason}"
-
-            current_text += f"\n\n{feedback}\nTry a different reasoning approach."
+            current_text += (
+                "\n\nThe answer was WRONG.\n"
+                "Try a DIFFERENT extraction approach.\n"
+                "Do NOT reuse logic."
+            )
             await asyncio.sleep(1)
             continue
 
+        # ----------------------------
+        # ANSWER CORRECT
+        # ----------------------------
         logger.info(f"Answer correct at step {steps}")
+        failures_for_url = 0
+        last_answer = None
 
         # ----------------------------
-        # FOLLOW NEXT QUIZ URL
+        # FOLLOW NEXT URL (FROM RESPONSE)
         # ----------------------------
         next_url = submit_resp.get("url")
 
@@ -168,12 +178,9 @@ PAGE TEXT:
             logger.info(f"Following next URL: {next_url}")
             current_url = next_url
             current_text = await browse(current_url)
-            last_answer = None
-            same_answer_count = 0
             continue
 
-        # No next quiz
-        break
+        break  # No next quiz
 
     logger.info("Agent loop completed")
     return all_results
