@@ -4,7 +4,6 @@ from .tools import browse, python, submit
 from .logger import logger
 from .llm import call_llm
 
-# Maximum steps per quiz to avoid infinite loops
 MAX_AGENT_STEPS = 40
 
 
@@ -15,28 +14,24 @@ def extract_python(code_text: str) -> str:
     if not code_text:
         return ""
 
-    # Prefer fenced python blocks
     match = re.search(r"```python(.*?)```", code_text, re.DOTALL)
     if match:
         return match.group(1).strip()
 
-    # Any fenced block
     match = re.search(r"```(.*?)```", code_text, re.DOTALL)
     if match:
         return match.group(1).strip()
 
-    # Fallback: raw text
     return code_text.strip()
 
 
 async def agent_loop(page_text, start_url, time_left_fn):
     """
-    Main agent loop that:
-    - Uses LLM to generate Python code
-    - Executes the code safely
+    Main agent loop:
+    - Generates Python via LLM
+    - Executes safely
     - Submits answers
-    - Retries intelligently
-    - Follows next URLs if present
+    - Follows next_url from submission response
     """
 
     current_text = page_text
@@ -57,17 +52,10 @@ async def agent_loop(page_text, start_url, time_left_fn):
             prompt = f"""
 You are an automated quiz-solving agent.
 
-TASK:
-- Read the quiz from the page text.
-- Compute the correct answer.
-
-OUTPUT RULES (STRICT):
-- Output ONLY valid Python code.
-- Do NOT use markdown.
-- Do NOT use backticks.
-- Do NOT include explanations.
-- The code MUST assign the final answer to a variable named `result`.
-- The code MUST run without syntax errors.
+RULES (STRICT):
+- Output ONLY valid Python code
+- No markdown, no backticks, no explanations
+- Assign the final answer to variable `result`
 
 PAGE TEXT:
 {current_text}
@@ -83,7 +71,7 @@ PAGE TEXT:
             break
 
         # ----------------------------
-        # EXECUTE PYTHON SAFELY
+        # EXECUTE PYTHON
         # ----------------------------
         clean_code = extract_python(llm_output)
         logger.info("Executing Python code")
@@ -98,7 +86,7 @@ PAGE TEXT:
             continue
 
         if result is None:
-            logger.warning("No result produced, retrying LLM step")
+            logger.warning("No result produced, retrying")
             continue
 
         # ----------------------------
@@ -113,42 +101,34 @@ PAGE TEXT:
             })
         except Exception as e:
             logger.error(f"Submission failed: {e}")
-            all_results.append({
-                "url": current_url,
-                "answer": result,
-                "submit_result": {"error": str(e)}
-            })
             break
 
         # ----------------------------
-        # CHECK CORRECTNESS
+        # CHECK RESULT
         # ----------------------------
-        correct = submit_resp.get("correct", False)
-        if correct:
-            logger.info(f"Answer correct at step {steps}")
-        else:
-            logger.info("Answer incorrect, refining approach and retrying")
+        if not submit_resp.get("correct", False):
+            logger.info("Answer incorrect, retrying")
             current_text += (
                 "\n\nPrevious answer was incorrect. "
-                "Re-check calculations carefully and try a different approach."
+                "Re-check calculations carefully."
             )
             await asyncio.sleep(1)
             continue
 
-        # ----------------------------
-        # FOLLOW NEXT URL (IF ANY)
-        # ----------------------------
-        next_url = None
-        match = re.search(r'(https?://[^\s"\']+)', current_text)
-        if match:
-            next_url = match.group(1)
+        logger.info(f"Answer correct at step {steps}")
 
-        if next_url and next_url != current_url:
+        # ----------------------------
+        # FOLLOW NEXT URL (CORRECT WAY)
+        # ----------------------------
+        next_url = submit_resp.get("next_url")
+
+        if next_url:
             logger.info(f"Following next URL: {next_url}")
             current_url = next_url
             current_text = await browse(current_url)
-        else:
-            break
+            continue
+
+        break  # no next quiz → done
 
     logger.info("Agent loop completed")
     return all_results
